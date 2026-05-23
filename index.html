@@ -394,14 +394,17 @@ App.start = function() {
       return liff.getProfile();
     })
     .then(function(profile) {
-      document.getElementById("login-msg").textContent = "Step 3: ตรวจสอบสมาชิก…";
+      document.getElementById("login-msg").textContent = "กำลังโหลดข้อมูล…";
       _lineProfile = profile;
 
-      // Load everything in parallel
+      // Load all data — each call handles its own retry via apiGet
       return Promise.all([
-        apiGet({ action:"checkLineUser", lineUserId:profile.userId }),
-        apiGet({ action:"getCarData" }),
+        apiGet({ action:"checkLineUser", lineUserId:profile.userId })
+          .catch(function(){ return { exists:false, error:"checkLineUser failed" }; }),
+        apiGet({ action:"getCarData" })
+          .catch(function(){ return { success:false, brands:[] }; }),
         apiGet({ action:"getThaiData" })
+          .catch(function(){ return { success:false, data:{} }; })
       ]);
     })
     .then(function(results) {
@@ -409,15 +412,14 @@ App.start = function() {
       var carRes    = results[1];
       var thaiRes   = results[2];
 
-      if (carRes.success)  _carData    = carRes.brands;
-      if (thaiRes.success) _clientData = thaiRes.data;
+      if (carRes.success && carRes.brands)  _carData    = carRes.brands;
+      if (thaiRes.success && thaiRes.data)  _clientData = thaiRes.data;
 
-      // Populate dropdowns now that data is ready
       _populateRegions();
 
       if (memberRes.exists) {
         _member = memberRes.member;
-        _cars   = memberRes.cars;
+        _cars   = memberRes.cars || [];
         App.showMemberPage();
       } else {
         App.showRegisterPage();
@@ -529,9 +531,20 @@ App.onCarModelChange = function(modelId, wrapId) {
 // ── Register ─────────────────────────────────────────────────
 App.showRegisterPage = function() {
   if(_lineProfile && _lineProfile.pictureUrl){
-    document.getElementById("line-avatar").src              = _lineProfile.pictureUrl;
+    document.getElementById("line-avatar").src               = _lineProfile.pictureUrl;
     document.getElementById("line-display-name").textContent = _lineProfile.displayName||"";
     document.getElementById("line-profile-bar").style.display="flex";
+  }
+  // Warn if dropdown data didn't load
+  if (!_carData.length || !_clientData) {
+    showErr("regErr","ข้อมูลโหลดไม่ครบ กรุณารอสักครู่แล้วลองใหม่ / Data not loaded, please wait and retry");
+    setTimeout(function() {
+      // Retry loading missing data
+      var calls = [];
+      if (!_carData.length)  calls.push(apiGet({action:"getCarData"}).then(function(r){if(r.success)_carData=r.brands;}));
+      if (!_clientData)      calls.push(apiGet({action:"getThaiData"}).then(function(r){if(r.success)_clientData=r.data;}));
+      Promise.all(calls).then(function(){ _populateRegions(); hideErr("regErr"); });
+    }, 1500);
   }
   App.showPage("page-register");
 };
