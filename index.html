@@ -326,15 +326,30 @@ var _clientData  = null;
 var _carData     = [];
 
 // ── API helpers ──────────────────────────────────────────────
-function apiGet(params) {
+function apiGet(params, retries) {
+  retries = retries || 0;
   var qs = Object.keys(params).map(function(k){ return k+"="+encodeURIComponent(params[k]); }).join("&");
-  return fetch(API_URL+"?"+qs).then(function(r){ return r.json(); });
+  return fetch(API_URL+"?"+qs, { redirect:"follow" })
+    .then(function(r){
+      if (!r.ok) throw new Error("HTTP "+r.status);
+      return r.json();
+    })
+    .catch(function(err) {
+      if (retries < 2) {
+        // GAS sometimes fails on first call due to cold start — retry
+        return new Promise(function(resolve) { setTimeout(resolve, 1000); })
+          .then(function() { return apiGet(params, retries+1); });
+      }
+      throw err;
+    });
 }
+
 function apiPost(data) {
   return fetch(API_URL, {
     method: "POST",
     headers: { "Content-Type": "text/plain" },
-    body: JSON.stringify(data)
+    body: JSON.stringify(data),
+    redirect: "follow"
   }).then(function(r){ return r.json(); });
 }
 
@@ -382,7 +397,7 @@ App.start = function() {
       document.getElementById("login-msg").textContent = "Step 3: ตรวจสอบสมาชิก…";
       _lineProfile = profile;
 
-      // Load Thai data and car data in parallel with member check
+      // Load everything in parallel
       return Promise.all([
         apiGet({ action:"checkLineUser", lineUserId:profile.userId }),
         apiGet({ action:"getCarData" }),
@@ -394,11 +409,10 @@ App.start = function() {
       var carRes    = results[1];
       var thaiRes   = results[2];
 
-      // Store data
       if (carRes.success)  _carData    = carRes.brands;
       if (thaiRes.success) _clientData = thaiRes.data;
 
-      // Populate region dropdowns
+      // Populate dropdowns now that data is ready
       _populateRegions();
 
       if (memberRes.exists) {
